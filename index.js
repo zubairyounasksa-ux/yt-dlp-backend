@@ -39,16 +39,16 @@ app.get("/info", (req, res) => {
     try {
       const json = JSON.parse(output);
 
-      let formats = json.formats
+      const formats = (json.formats || [])
         .filter((f) => f.format_id && (f.vcodec !== "none" || f.acodec !== "none"))
         .map((f) => ({
           formatId: f.format_id,
-          quality: f.vcodec === "none" ? `${Math.round(f.abr || 0)} kbps (Audio)` : `${f.width}x${f.height}`,
+          quality: f.vcodec === "none" ? `${Math.round(f.abr || 0)} kbps (Audio)` : `${f.width || 0}x${f.height || 0}`,
           sizeMB: f.filesize ? (f.filesize / 1024 / 1024).toFixed(1) : "0",
           isAudio: f.vcodec === "none",
         }));
 
-      // Sort: video first (biggest size), audio last
+      // Sort: videos first (largest), audio last
       formats.sort((a, b) => {
         if (a.isAudio && !b.isAudio) return 1;
         if (!a.isAudio && b.isAudio) return -1;
@@ -85,7 +85,6 @@ app.get("/download", (req, res) => {
   });
 
   ytDlp.stdout.pipe(res);
-
   ytDlp.stderr.on("data", (data) => console.error(`yt-dlp: ${data}`));
 
   ytDlp.on("close", (code) => {
@@ -93,4 +92,4 @@ app.get("/download", (req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Server running at http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
