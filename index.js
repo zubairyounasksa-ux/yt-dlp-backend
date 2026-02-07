@@ -1,98 +1,63 @@
-import express from "express";
-import cors from "cors";
-import ytdlp from "yt-dlp-exec";
+const express = require("express");
+const cors = require("cors");
+const { spawn } = require("child_process");
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 
-// Health check
+app.get("/", (req, res) => res.send("✅ yt-dlp backend running"));
 app.get("/health", (req, res) => res.json({ ok: true }));
 
-// Root
-app.get("/", (req, res) => res.send("✅ yt-dlp backend running"));
-
-// GET /info?url=...
-app.get("/info", async (req, res) => {
+app.get("/info", (req, res) => {
   const url = req.query.url;
   if (!url) return res.status(400).json({ error: "Missing url parameter" });
 
-  try {
-    const info = await ytdlp(url, {
-      dumpSingleJson: true,
-      noPlaylist: true,
-      noWarnings: true
-    });
+  const p = spawn("yt-dlp", ["-J", "--no-playlist", url]);
 
-    const formats = (info.formats || [])
-      .filter((f) => f.format_id && (f.vcodec !== "none" || f.acodec !== "none"))
-      .map((f) => ({
-        formatId: f.format_id,
-        ext: f.ext || "",
-        quality:
-          f.vcodec === "none"
-            ? `${Math.round(f.abr || 0)} kbps (Audio)`
-            : `${f.height || 0}p`,
-        fps: f.fps || null,
-        sizeMB: f.filesize ? (f.filesize / 1024 / 1024).toFixed(1) : null,
-        isAudio: f.vcodec === "none",
-        vcodec: f.vcodec,
-        acodec: f.acodec
-      }))
-      .sort((a, b) => {
-        // video first, audio last, then bigger size first (null sizes go last)
-        if (a.isAudio && !b.isAudio) return 1;
-        if (!a.isAudio && b.isAudio) return -1;
-        const as = a.sizeMB ? parseFloat(a.sizeMB) : -1;
-        const bs = b.sizeMB ? parseFloat(b.sizeMB) : -1;
-        return bs - as;
+  let out = "";
+  let err = "";
+  p.stdout.on("data", (d) => (out += d.toString()));
+  p.stderr.on("data", (d) => (err += d.toString()));
+
+  p.on("close", (code) => {
+    if (code !== 0) return res.status(500).json({ error: "yt-dlp failed", details: err });
+
+    try {
+      const json = JSON.parse(out);
+      res.json({
+        title: json.title,
+        thumbnail: json.thumbnail,
+        duration: json.duration,
+        channel: json.uploader,
+        formats: (json.formats || []).map((f) => ({
+          formatId: f.format_id,
+          ext: f.ext,
+          height: f.height,
+          abr: f.abr,
+          filesize: f.filesize,
+          vcodec: f.vcodec,
+          acodec: f.acodec
+        }))
       });
-
-    res.json({
-      title: info.title,
-      thumbnail: info.thumbnail,
-      duration: info.duration,
-      channel: info.uploader,
-      webpage_url: info.webpage_url,
-      formats
-    });
-  } catch (err) {
-    console.error("INFO ERROR:", err?.message || err);
-    res.status(500).json({ error: "Failed to fetch info" });
-  }
+    } catch (e) {
+      res.status(500).json({ error: "Invalid yt-dlp JSON" });
+    }
+  });
 });
 
-// GET /download?url=...&format=...
-app.get("/download", async (req, res) => {
+app.get("/download", (req, res) => {
   const { url, format } = req.query;
-  if (!url || !format) {
-    return res.status(400).json({ error: "Missing url or format parameter" });
-  }
+  if (!url || !format) return res.status(400).json({ error: "Missing url or format" });
 
-  // Basic filename safety
   res.setHeader("Content-Disposition", "attachment");
   res.setHeader("Content-Type", "application/octet-stream");
 
-  try {
-    const proc = ytdlp.raw(url, {
-      format,
-      output: "-",         // pipe to stdout
-      noPlaylist: true,
-      noWarnings: true
-    });
-
-    proc.stdout.pipe(res);
-
-    proc.stderr.on("data", (d) => console.error("yt-dlp:", d.toString()));
-    proc.on("close", (code) => {
-      if (code !== 0 && !res.headersSent) res.status(500).end();
-      else res.end();
-    });
-  } catch (err) {
-    console.error("DOWNLOAD ERROR:", err?.message || err);
-    if (!res.headersSent) res.status(500).json({ error: "Download failed" });
-  }
+  const p = spawn("yt-dlp", ["-f", format, "-o", "-", url]);
+  p.stdout.pipe(res);
+  p.stderr.on("data", (d) => console.error(d.toString()));
+  p.on("close", () => res.end());
 });
 
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
