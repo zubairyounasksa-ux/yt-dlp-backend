@@ -1,12 +1,16 @@
 #!/bin/bash
 
-# Make script executable
-chmod +x start.sh
+# Exit on errors
+set -e
 
-# Install yt-dlp
+# Install Node.js dependencies
+echo "Installing Node.js dependencies..."
+npm install
+
+# Install yt-dlp via pip
 echo "Installing yt-dlp..."
 pip install yt-dlp
 
-# Start Node.js server
+# Start the server
 echo "Starting server..."
 node index.js
